@@ -79,16 +79,12 @@
     <p class="summary" id="totalsLine"></p>
   </div>
 
-  <!-- API KEYS -->
+  <!-- API KEY -->
   <div class="card">
-    <h2>API keys</h2>
+    <h2>API key (alleen voor zoeken)</h2>
     <label>
-      Finnhub API key (zoeken)
+      Finnhub API key
       <input type="text" id="finnhubKey" placeholder="Finnhub API key" />
-    </label>
-    <label>
-      Alpha Vantage API key (koersen)
-      <input type="text" id="alphaKey" placeholder="Alpha Vantage API key" />
     </label>
     <button id="refreshPrices">Koersen verversen</button>
   </div>
@@ -105,7 +101,6 @@ const buyPriceInput = document.getElementById("buyPrice");
 const portfolioBody = document.getElementById("portfolioBody");
 const totalsLine = document.getElementById("totalsLine");
 const finnhubKeyInput = document.getElementById("finnhubKey");
-const alphaKeyInput = document.getElementById("alphaKey");
 
 tickerInput.addEventListener("input", () => {
   tickerInput.value = tickerInput.value.toUpperCase();
@@ -136,14 +131,21 @@ function getFxRate(currency, rates) {
   return 1 / rates[currency];
 }
 
-async function fetchPriceAlpha(ticker, apiKey) {
-  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${apiKey}`;
+async function fetchYahooPrice(ticker) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`;
   const r = await fetch(url);
   const d = await r.json();
-  const series = d["Time Series (Daily)"];
-  if (!series) throw new Error("Geen koers voor " + ticker);
-  const latest = Object.keys(series)[0];
-  return Number(series[latest]["4. close"]);
+
+  if (!d.chart || !d.chart.result || !d.chart.result[0]) {
+    throw new Error("Geen koersdata");
+  }
+
+  const meta = d.chart.result[0].meta;
+  if (!meta || !meta.regularMarketPrice) {
+    throw new Error("Geen koers gevonden");
+  }
+
+  return meta.regularMarketPrice;
 }
 
 async function searchFinnhub(query, apiKey) {
@@ -162,48 +164,65 @@ async function loadAmsterdamSymbols(apiKey) {
 searchInput.addEventListener("input", async () => {
   const q = searchInput.value.trim();
   const apiKey = finnhubKeyInput.value.trim();
-  if (q.length < 2 || !apiKey) {
-    searchResults.style.display = "none";
+
+  searchResults.innerHTML = "";
+  searchResults.style.display = "none";
+
+  if (q.length < 2) return;
+  if (!apiKey) {
+    searchResults.innerHTML = "<div class='search-item'>Geen Finnhub API key ingevuld</div>";
+    searchResults.style.display = "block";
     return;
   }
 
-  const [general, ams] = await Promise.all([
-    searchFinnhub(q, apiKey),
-    loadAmsterdamSymbols(apiKey)
-  ]);
+  try {
+    const [general, ams] = await Promise.all([
+      searchFinnhub(q, apiKey),
+      loadAmsterdamSymbols(apiKey)
+    ]);
 
-  const amsMatches = ams.filter(s =>
-    s.description?.toLowerCase().includes(q.toLowerCase()) ||
-    s.symbol?.toLowerCase().includes(q.toLowerCase())
-  );
+    const amsMatches = ams.filter(s =>
+      (s.description || "").toLowerCase().includes(q.toLowerCase()) ||
+      (s.symbol || "").toLowerCase().includes(q.toLowerCase())
+    );
 
-  const combined = [
-    ...amsMatches.map(s => ({ symbol: s.symbol, description: s.description })),
-    ...general.map(s => ({ symbol: s.symbol, description: s.description }))
-  ];
+    const combined = [
+      ...amsMatches.map(s => ({ symbol: s.symbol, description: s.description })),
+      ...general.map(s => ({ symbol: s.symbol, description: s.description }))
+    ];
 
-  const unique = [];
-  const seen = new Set();
-  for (const item of combined) {
-    if (!seen.has(item.symbol)) {
-      seen.add(item.symbol);
-      unique.push(item);
+    const unique = [];
+    const seen = new Set();
+    for (const item of combined) {
+      if (!seen.has(item.symbol)) {
+        seen.add(item.symbol);
+        unique.push(item);
+      }
     }
+
+    if (unique.length === 0) {
+      searchResults.innerHTML = "<div class='search-item'>Geen resultaten gevonden</div>";
+      searchResults.style.display = "block";
+      return;
+    }
+
+    unique.forEach(item => {
+      const div = document.createElement("div");
+      div.className = "search-item";
+      div.textContent = `${item.symbol} — ${item.description}`;
+      div.onclick = () => {
+        tickerInput.value = item.symbol.toUpperCase();
+        searchResults.style.display = "none";
+      };
+      searchResults.appendChild(div);
+    });
+
+    searchResults.style.display = "block";
+
+  } catch (err) {
+    searchResults.innerHTML = `<div class='search-item'>Fout: ${err.message}</div>`;
+    searchResults.style.display = "block";
   }
-
-  searchResults.innerHTML = "";
-  unique.forEach(item => {
-    const div = document.createElement("div");
-    div.className = "search-item";
-    div.textContent = `${item.symbol} — ${item.description}`;
-    div.onclick = () => {
-      tickerInput.value = item.symbol.toUpperCase();
-      searchResults.style.display = "none";
-    };
-    searchResults.appendChild(div);
-  });
-
-  searchResults.style.display = unique.length ? "block" : "none";
 });
 
 function render() {
@@ -258,18 +277,15 @@ function render() {
 function save() {
   localStorage.setItem("pf", JSON.stringify(positions));
   localStorage.setItem("finnhubKey", finnhubKeyInput.value);
-  localStorage.setItem("alphaKey", alphaKeyInput.value);
 }
 
 function load() {
   positions = JSON.parse(localStorage.getItem("pf") || "[]");
   finnhubKeyInput.value = localStorage.getItem("finnhubKey") || "";
-  alphaKeyInput.value = localStorage.getItem("alphaKey") || "";
 }
 
 document.getElementById("addPosition").onclick = async () => {
   const finnhubKey = finnhubKeyInput.value.trim();
-  const alphaKey = alphaKeyInput.value.trim();
   const ticker = tickerInput.value.trim().toUpperCase();
   const shares = Number(sharesInput.value);
   const buyPrice = Number(buyPriceInput.value);
@@ -284,7 +300,7 @@ document.getElementById("addPosition").onclick = async () => {
   const currency = getCurrencyForTicker(ticker);
 
   try {
-    price = await fetchPriceAlpha(ticker, alphaKey);
+    price = await fetchYahooPrice(ticker);
     if (!fxRatesCache) fxRatesCache = await fetchFxRates(finnhubKey);
     fxRate = getFxRate(currency, fxRatesCache);
   } catch (e) {
@@ -303,15 +319,12 @@ document.getElementById("addPosition").onclick = async () => {
 
 document.getElementById("refreshPrices").onclick = async () => {
   const finnhubKey = finnhubKeyInput.value.trim();
-  const alphaKey = alphaKeyInput.value.trim();
-
-  if (!alphaKey) return alert("Voer je Alpha Vantage key in.");
 
   fxRatesCache = await fetchFxRates(finnhubKey);
 
   for (const pos of positions) {
     try {
-      pos.currentPrice = await fetchPriceAlpha(pos.ticker, alphaKey);
+      pos.currentPrice = await fetchYahooPrice(pos.ticker);
       pos.fxRate = getFxRate(pos.currency, fxRatesCache);
     } catch (e) {
       alert("Fout bij verversen: " + pos.ticker);
