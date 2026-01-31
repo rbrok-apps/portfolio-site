@@ -27,6 +27,7 @@
 <body>
   <h1>Mijn Aandelen & ETF portefeuille</h1>
 
+  <!-- ZOEKFUNCTIE -->
   <div class="card">
     <h2>Aandeel / ETF zoeken</h2>
     <label>
@@ -36,6 +37,7 @@
     <div id="searchResults" class="search-results" style="display:none;"></div>
   </div>
 
+  <!-- POSITIE TOEVOEGEN -->
   <div class="card">
     <h2>Positie toevoegen</h2>
     <label>
@@ -55,6 +57,7 @@
     <button class="secondary" id="clearAll">Alles wissen</button>
   </div>
 
+  <!-- PORTEFEUILLE -->
   <div class="card">
     <h2>Portefeuille</h2>
     <table>
@@ -76,11 +79,16 @@
     <p class="summary" id="totalsLine"></p>
   </div>
 
+  <!-- API KEYS -->
   <div class="card">
-    <h2>API key</h2>
+    <h2>API keys</h2>
     <label>
-      Finnhub API key
+      Finnhub API key (zoeken)
       <input type="text" id="finnhubKey" placeholder="Finnhub API key" />
+    </label>
+    <label>
+      Alpha Vantage API key (koersen)
+      <input type="text" id="alphaKey" placeholder="Alpha Vantage API key" />
     </label>
     <button id="refreshPrices">Koersen verversen</button>
   </div>
@@ -97,6 +105,7 @@ const buyPriceInput = document.getElementById("buyPrice");
 const portfolioBody = document.getElementById("portfolioBody");
 const totalsLine = document.getElementById("totalsLine");
 const finnhubKeyInput = document.getElementById("finnhubKey");
+const alphaKeyInput = document.getElementById("alphaKey");
 
 tickerInput.addEventListener("input", () => {
   tickerInput.value = tickerInput.value.toUpperCase();
@@ -127,12 +136,14 @@ function getFxRate(currency, rates) {
   return 1 / rates[currency];
 }
 
-async function fetchPrice(ticker, apiKey) {
-  const url = `https://finnhub.io/api/v1/quote?symbol=${ticker}&token=${apiKey}`;
+async function fetchPriceAlpha(ticker, apiKey) {
+  const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${apiKey}`;
   const r = await fetch(url);
   const d = await r.json();
-  if (!d.c) throw new Error("Geen koers voor " + ticker);
-  return d.c;
+  const series = d["Time Series (Daily)"];
+  if (!series) throw new Error("Geen koers voor " + ticker);
+  const latest = Object.keys(series)[0];
+  return Number(series[latest]["4. close"]);
 }
 
 async function searchFinnhub(query, apiKey) {
@@ -247,15 +258,18 @@ function render() {
 function save() {
   localStorage.setItem("pf", JSON.stringify(positions));
   localStorage.setItem("finnhubKey", finnhubKeyInput.value);
+  localStorage.setItem("alphaKey", alphaKeyInput.value);
 }
 
 function load() {
   positions = JSON.parse(localStorage.getItem("pf") || "[]");
   finnhubKeyInput.value = localStorage.getItem("finnhubKey") || "";
+  alphaKeyInput.value = localStorage.getItem("alphaKey") || "";
 }
 
 document.getElementById("addPosition").onclick = async () => {
-  const apiKey = finnhubKeyInput.value.trim();
+  const finnhubKey = finnhubKeyInput.value.trim();
+  const alphaKey = alphaKeyInput.value.trim();
   const ticker = tickerInput.value.trim().toUpperCase();
   const shares = Number(sharesInput.value);
   const buyPrice = Number(buyPriceInput.value);
@@ -270,8 +284,8 @@ document.getElementById("addPosition").onclick = async () => {
   const currency = getCurrencyForTicker(ticker);
 
   try {
-    price = await fetchPrice(ticker, apiKey);
-    if (!fxRatesCache) fxRatesCache = await fetchFxRates(apiKey);
+    price = await fetchPriceAlpha(ticker, alphaKey);
+    if (!fxRatesCache) fxRatesCache = await fetchFxRates(finnhubKey);
     fxRate = getFxRate(currency, fxRatesCache);
   } catch (e) {
     alert(e.message);
@@ -288,14 +302,16 @@ document.getElementById("addPosition").onclick = async () => {
 };
 
 document.getElementById("refreshPrices").onclick = async () => {
-  const apiKey = finnhubKeyInput.value.trim();
-  if (!apiKey) return alert("Voer je Finnhub key in.");
+  const finnhubKey = finnhubKeyInput.value.trim();
+  const alphaKey = alphaKeyInput.value.trim();
 
-  fxRatesCache = await fetchFxRates(apiKey);
+  if (!alphaKey) return alert("Voer je Alpha Vantage key in.");
+
+  fxRatesCache = await fetchFxRates(finnhubKey);
 
   for (const pos of positions) {
     try {
-      pos.currentPrice = await fetchPrice(pos.ticker, apiKey);
+      pos.currentPrice = await fetchPriceAlpha(pos.ticker, alphaKey);
       pos.fxRate = getFxRate(pos.currency, fxRatesCache);
     } catch (e) {
       alert("Fout bij verversen: " + pos.ticker);
