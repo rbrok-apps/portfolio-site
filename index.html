@@ -119,6 +119,7 @@ function formatCurrency(v, c) {
 }
 
 async function fetchFxRates(apiKey) {
+  if (!apiKey) return {};
   const url = `https://finnhub.io/api/v1/forex/rates?base=EUR&token=${apiKey}`;
   const r = await fetch(url);
   const d = await r.json();
@@ -158,7 +159,8 @@ async function searchFinnhub(query, apiKey) {
 async function loadAmsterdamSymbols(apiKey) {
   const url = `https://finnhub.io/api/v1/stock/symbol?exchange=AS&token=${apiKey}`;
   const r = await fetch(url);
-  return await r.json();
+  const data = await r.json();
+  return Array.isArray(data) ? data : [];
 }
 
 searchInput.addEventListener("input", async () => {
@@ -266,9 +268,10 @@ function render() {
   }
 
   document.querySelectorAll("button[data-i]").forEach(btn => {
-    btn.onclick = () => {
+    btn.onclick = async () => {
       positions.splice(btn.dataset.i, 1);
       save();
+      await refreshAllPrices();
       render();
     };
   });
@@ -279,9 +282,27 @@ function save() {
   localStorage.setItem("finnhubKey", finnhubKeyInput.value);
 }
 
-function load() {
+async function refreshAllPrices() {
+  const finnhubKey = finnhubKeyInput.value.trim();
+  fxRatesCache = await fetchFxRates(finnhubKey);
+
+  for (const pos of positions) {
+    pos.currentPrice = await fetchYahooPrice(pos.ticker);
+    pos.fxRate = getFxRate(pos.currency, fxRatesCache);
+  }
+
+  save();
+}
+
+async function load() {
   positions = JSON.parse(localStorage.getItem("pf") || "[]");
   finnhubKeyInput.value = localStorage.getItem("finnhubKey") || "";
+
+  if (positions.length > 0) {
+    await refreshAllPrices();
+  }
+
+  render();
 }
 
 document.getElementById("addPosition").onclick = async () => {
@@ -304,7 +325,7 @@ document.getElementById("addPosition").onclick = async () => {
     if (!fxRatesCache) fxRatesCache = await fetchFxRates(finnhubKey);
     fxRate = getFxRate(currency, fxRatesCache);
   } catch (e) {
-    alert(e.message);
+    alert("Kon koers niet ophalen: " + e.message);
   }
 
   positions.push({ ticker, shares, buyPrice, currentPrice: price, currency, fxRate });
@@ -318,20 +339,7 @@ document.getElementById("addPosition").onclick = async () => {
 };
 
 document.getElementById("refreshPrices").onclick = async () => {
-  const finnhubKey = finnhubKeyInput.value.trim();
-
-  fxRatesCache = await fetchFxRates(finnhubKey);
-
-  for (const pos of positions) {
-    try {
-      pos.currentPrice = await fetchYahooPrice(pos.ticker);
-      pos.fxRate = getFxRate(pos.currency, fxRatesCache);
-    } catch (e) {
-      alert("Fout bij verversen: " + pos.ticker);
-    }
-  }
-
-  save();
+  await refreshAllPrices();
   render();
 };
 
@@ -344,7 +352,6 @@ document.getElementById("clearAll").onclick = () => {
 };
 
 load();
-render();
 </script>
 
 </body>
