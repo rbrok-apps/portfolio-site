@@ -31,13 +31,16 @@
   <div class="card">
     <h2>Instellingen</h2>
     <label>
-      Startkapitaal (€)
+      Startkapitaal (basis in EUR)
       <input type="number" id="startCapital" value="10000" step="100" />
     </label>
     <label>
-      Beschikbaar cash (€)
+      Beschikbaar cash (EUR)
       <input type="number" id="cash" value="2500" step="100" />
     </label>
+    <p class="small">
+      Totale waarde en resultaat worden als indicatie in EUR getoond. Posities zelf blijven in hun eigen valuta.
+    </p>
   </div>
 
   <div class="card">
@@ -51,7 +54,7 @@
       <input type="number" id="shares" step="1" />
     </label>
     <label>
-      Gemiddelde aankoopprijs (€)
+      Gemiddelde aankoopprijs (in valuta van de ticker)
       <input type="number" id="buyPrice" step="0.01" />
     </label>
 
@@ -60,7 +63,7 @@
 
     <p class="small">
       De huidige koers wordt automatisch opgehaald via Alpha Vantage.  
-      Als dat niet lukt, wordt de positie toch toegevoegd.
+      Als dat niet lukt, wordt de positie toch toegevoegd met koers 0.
     </p>
   </div>
 
@@ -92,6 +95,9 @@
       <input type="text" id="apiKey" placeholder="Je Alpha Vantage API key" />
       <button type="button" id="refreshPrices">Koersen verversen</button>
     </div>
+    <p class="small">
+      De API key wordt lokaal opgeslagen in je browser totdat je hem wijzigt.
+    </p>
   </div>
 
   <script>
@@ -110,16 +116,12 @@
 
     let positions = [];
 
-    /* -----------------------------
-       TICKER NAAR HOOFDLETTERS
-    ------------------------------*/
+    // Ticker altijd in hoofdletters
     tickerInput.addEventListener('input', () => {
       tickerInput.value = tickerInput.value.toUpperCase();
     });
 
-    /* -----------------------------
-       VALUTA OP BASIS VAN SUFFIX
-    ------------------------------*/
+    // Valuta op basis van suffix
     function getCurrencyForTicker(ticker) {
       if (ticker.endsWith(".AMS")) return "EUR";
       if (ticker.endsWith(".BRU")) return "EUR";
@@ -137,12 +139,9 @@
       return symbol + " " + value.toFixed(2).replace('.', ',');
     }
 
-    /* -----------------------------
-       RENDEREN VAN DE TABEL
-    ------------------------------*/
     function render() {
       portfolioBody.innerHTML = '';
-      let totalValue = 0;
+      let totalValueBase = 0; // indicatief in EUR (we nemen 1:1, geen FX)
 
       positions.forEach((pos, index) => {
         const invested = pos.shares * pos.buyPrice;
@@ -150,8 +149,167 @@
         const result = value - invested;
         const pct = invested === 0 ? 0 : (result / invested) * 100;
 
-        totalValue += value;
+        // Voor nu: neem waarde 1:1 mee in "basis" (geen FX conversie)
+        totalValueBase += value;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td>${
+          <td>${pos.ticker}</td>
+          <td>${pos.shares}</td>
+          <td>${formatCurrency(pos.buyPrice, pos.currency)}</td>
+          <td>${formatCurrency(pos.currentPrice, pos.currency)}</td>
+          <td>${formatCurrency(invested, pos.currency)}</td>
+          <td>${formatCurrency(value, pos.currency)}</td>
+          <td class="${result >= 0 ? 'gain' : 'loss'}">${formatCurrency(result, pos.currency)}</td>
+          <td class="${pct >= 0 ? 'gain' : 'loss'}">${pct.toFixed(1)}%</td>
+          <td><button type="button" class="secondary" data-index="${index}">X</button></td>
+        `;
+        portfolioBody.appendChild(tr);
+      });
+
+      const cash = Number(cashInput.value) || 0;
+      const startCapital = Number(startCapitalInput.value) || 0;
+      const totalWithCash = totalValueBase + cash;
+      const totalResult = totalWithCash - startCapital;
+      const totalPct = startCapital === 0 ? 0 : (totalResult / startCapital) * 100;
+
+      totalsLine.innerHTML =
+        `Totale waarde (indicatief in EUR): € ${totalWithCash.toFixed(2)} (waarvan cash € ${cash.toFixed(2)}). ` +
+        `Totaal resultaat: <span class="${totalResult >= 0 ? 'gain' : 'loss'}">€ ${totalResult.toFixed(2)} (${totalPct.toFixed(1)}%)</span>`;
+
+      if (totalWithCash > 0) {
+        const equityPct = (totalValueBase / totalWithCash) * 100;
+        const cashPct = (cash / totalWithCash) * 100;
+        allocationLine.textContent =
+          `Verdeling: aandelen/ETF ${equityPct.toFixed(1)}% • cash ${cashPct.toFixed(1)}%`;
+      } else {
+        allocationLine.textContent = '';
+      }
+
+      document.querySelectorAll('button.secondary[data-index]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          positions.splice(Number(btn.dataset.index), 1);
+          save();
+          render();
+        });
+      });
+    }
+
+    function save() {
+      localStorage.setItem('portfolioApp', JSON.stringify({
+        positions,
+        startCapital: Number(startCapitalInput.value),
+        cash: Number(cashInput.value)
+      }));
+      const apiKey = apiKeyInput.value.trim();
+      if (apiKey) {
+        localStorage.setItem('portfolioApiKey', apiKey);
+      }
+    }
+
+    function load() {
+      const raw = localStorage.getItem('portfolioApp');
+      if (raw) {
+        const data = JSON.parse(raw);
+        positions = data.positions || [];
+        if (typeof data.startCapital === 'number') startCapitalInput.value = data.startCapital;
+        if (typeof data.cash === 'number') cashInput.value = data.cash;
+      }
+      const storedKey = localStorage.getItem('portfolioApiKey');
+      if (storedKey) {
+        apiKeyInput.value = storedKey;
+      }
+    }
+
+    async function fetchPrice(ticker, apiKey) {
+      const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${apiKey}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data["Global Quote"] || !data["Global Quote"]["05. price"]) {
+        throw new Error("Ticker niet gevonden: " + ticker);
+      }
+      return Number(data["Global Quote"]["05. price"]);
+    }
+
+    addButton.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      let ticker = tickerInput.value.trim().toUpperCase();
+      const shares = Number(sharesInput.value);
+      const buyPrice = Number(buyPriceInput.value);
+
+      if (!ticker || shares <= 0 || buyPrice <= 0) {
+        alert("Vul alle velden correct in.");
+        return;
+      }
+
+      let price = 0;
+
+      if (!apiKey) {
+        alert("Geen API key ingevuld. Positie wordt toegevoegd met koers 0.");
+      } else {
+        try {
+          price = await fetchPrice(ticker, apiKey);
+        } catch (e) {
+          alert(e.message + ". Positie wordt toch toegevoegd.");
+        }
+      }
+
+      positions.push({
+        ticker,
+        shares,
+        buyPrice,
+        currentPrice: price,
+        currency: getCurrencyForTicker(ticker)
+      });
+
+      tickerInput.value = '';
+      sharesInput.value = '';
+      buyPriceInput.value = '';
+
+      save();
+      render();
+    });
+
+    refreshButton.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        alert("Voer je API key in.");
+        return;
+      }
+
+      refreshButton.disabled = true;
+      refreshButton.textContent = "Bezig...";
+
+      for (let pos of positions) {
+        try {
+          pos.currentPrice = await fetchPrice(pos.ticker, apiKey);
+        } catch (e) {
+          alert(e.message);
+        }
+      }
+
+      save();
+      render();
+
+      refreshButton.disabled = false;
+      refreshButton.textContent = "Koersen verversen";
+    });
+
+    clearButton.addEventListener('click', () => {
+      if (confirm("Alles wissen?")) {
+        positions = [];
+        save();
+        render();
+      }
+    });
+
+    startCapitalInput.addEventListener('input', () => { save(); render(); });
+    cashInput.addEventListener('input', () => { save(); render(); });
+    apiKeyInput.addEventListener('input', () => { save(); });
+
+    load();
+    render();
+  </script>
+</body>
+</html>
