@@ -30,19 +30,22 @@
   <h1>Mijn Aandelen & ETF portefeuille</h1>
 
   <div class="card">
-    <h2>Aandeel / ETF zoeken</h2>
+    <h2>Aandeel / ETF zoeken (Finnhub)</h2>
     <label>
       Zoek op naam
       <input type="text" id="searchInput" placeholder="Bijv. ASML, Vanguard, Tesla" />
     </label>
     <div id="searchResults" class="search-results" style="display:none;"></div>
+    <p class="small">
+      Resultaten komen uit Finnhub /search. Klik op een regel om de ticker over te nemen.
+    </p>
   </div>
 
   <div class="card">
     <h2>Positie toevoegen</h2>
     <label>
       Ticker
-      <input type="text" id="ticker" placeholder="Bijv. ASML.AMS, AAPL" />
+      <input type="text" id="ticker" placeholder="Bijv. ASML.AS, AAPL" />
     </label>
     <label>
       Aantal stuks
@@ -79,16 +82,15 @@
   </div>
 
   <div class="card">
-    <h2>API Keys</h2>
+    <h2>API key</h2>
     <label>
-      Alpha Vantage API key
-      <input type="text" id="apiKey" placeholder="Alpha Vantage key" />
-    </label>
-    <label>
-      RapidAPI key (Yahoo Finance)
-      <input type="text" id="rapidKey" placeholder="RapidAPI key" />
+      Finnhub API key
+      <input type="text" id="finnhubKey" placeholder="Finnhub API key" />
     </label>
     <button type="button" id="refreshPrices">Koersen verversen</button>
+    <p class="small">
+      De key wordt lokaal opgeslagen in je browser. Free plan van Finnhub is voldoende voor zoeken en koersen.
+    </p>
   </div>
 
   <script>
@@ -102,87 +104,101 @@
     const portfolioBody = document.getElementById('portfolioBody');
     const totalsLine = document.getElementById('totalsLine');
     const refreshButton = document.getElementById('refreshPrices');
-    const apiKeyInput = document.getElementById('apiKey');
-    const rapidKeyInput = document.getElementById('rapidKey');
+    const finnhubKeyInput = document.getElementById('finnhubKey');
 
     let positions = [];
+    let fxRatesCache = null; // EUR‑gebaseerde FX‑rates cache
 
+    // Ticker altijd uppercase
     tickerInput.addEventListener('input', () => {
       tickerInput.value = tickerInput.value.toUpperCase();
     });
 
+    // Valuta op basis van suffix (Finnhub gebruikt o.a. .AS, .L, .PA, .F, .BR)
     function getCurrencyForTicker(ticker) {
-      if (ticker.endsWith(".AS") || ticker.endsWith(".AMS")) return "EUR";
-      if (ticker.endsWith(".BRU")) return "EUR";
-      if (ticker.endsWith(".PAR")) return "EUR";
-      if (ticker.endsWith(".FRA")) return "EUR";
-      if (ticker.endsWith(".LON")) return "GBP";
+      const t = ticker.toUpperCase();
+      if (t.endsWith(".AS") || t.endsWith(".AMS") || t.endsWith(".PA") || t.endsWith(".F") || t.endsWith(".BR")) return "EUR";
+      if (t.endsWith(".L")) return "GBP";
       return "USD";
     }
 
     function formatCurrency(value, currency) {
       const symbols = { EUR: "€", USD: "$", GBP: "£" };
-      return symbols[currency] + " " + value.toFixed(2);
+      const symbol = symbols[currency] || "";
+      return symbol + " " + value.toFixed(2);
     }
 
-    async function fetchFxRate(from, apiKey) {
-      if (from === "EUR") return 1;
-      const url = `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=${from}&to_currency=EUR&apikey=${apiKey}`;
+    // FX‑rates ophalen (base = EUR)
+    async function fetchFxRates(apiKey) {
+      const url = `https://finnhub.io/api/v1/forex/rates?base=EUR&token=${apiKey}`;
       const r = await fetch(url);
       const d = await r.json();
-      return Number(d["Realtime Currency Exchange Rate"]["5. Exchange Rate"]);
+      return d.rates || {};
     }
 
+    // Conversiefactor van valuta → EUR
+    function getFxRateForCurrency(currency, fxRates) {
+      if (currency === "EUR") return 1;
+      const rate = fxRates[currency];
+      if (!rate) return 1;
+      // rates[currency] = hoeveel van die valuta voor 1 EUR → 1 / rate = EUR per 1 unit
+      return 1 / rate;
+    }
+
+    // Koers ophalen via Finnhub /quote
     async function fetchPrice(ticker, apiKey) {
-      const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${apiKey}`;
+      const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${apiKey}`;
       const r = await fetch(url);
       const d = await r.json();
-      const series = d["Time Series (Daily)"];
-      if (!series) throw new Error("Ticker niet gevonden: " + ticker);
-      const latest = Object.keys(series)[0];
-      return Number(series[latest]["4. close"]);
+      if (typeof d.c !== "number" || d.c === 0) {
+        throw new Error("Koers niet gevonden voor " + ticker);
+      }
+      return d.c;
     }
 
-    async function searchYahoo(query, rapidKey) {
-      const url = `https://yfapi.net/v6/finance/autocomplete?query=${query}`;
-      const r = await fetch(url, {
-        headers: {
-          "X-RapidAPI-Key": rapidKey,
-          "X-RapidAPI-Host": "yfapi.net"
-        }
-      });
+    // Zoeken via Finnhub /search
+    async function searchFinnhub(query, apiKey) {
+      const url = `https://finnhub.io/api/v1/search?q=${encodeURIComponent(query)}&token=${apiKey}`;
+      const r = await fetch(url);
       const d = await r.json();
       return d.result || [];
     }
 
+    // Zoekinput
     searchInput.addEventListener('input', async () => {
       const q = searchInput.value.trim();
-      const rapidKey = rapidKeyInput.value.trim();
-      if (!q || !rapidKey) {
+      const apiKey = finnhubKeyInput.value.trim();
+      if (q.length < 2 || !apiKey) {
         searchResults.style.display = "none";
         return;
       }
 
-      const results = await searchYahoo(q, rapidKey);
-
-      searchResults.innerHTML = "";
-      results.forEach(item => {
-        const div = document.createElement('div');
-        div.className = "search-item";
-        div.textContent = `${item.symbol} — ${item.shortname}`;
-        div.addEventListener('click', () => {
-          tickerInput.value = item.symbol.toUpperCase();
-          searchResults.style.display = "none";
+      try {
+        const results = await searchFinnhub(q, apiKey);
+        searchResults.innerHTML = "";
+        results.forEach(item => {
+          const div = document.createElement('div');
+          div.className = "search-item";
+          const symbol = item.symbol || item.displaySymbol || "";
+          const name = item.description || item.symbol || "";
+          div.textContent = `${symbol} — ${name}`;
+          div.addEventListener('click', () => {
+            tickerInput.value = symbol.toUpperCase();
+            searchResults.style.display = "none";
+          });
+          searchResults.appendChild(div);
         });
-        searchResults.appendChild(div);
-      });
-
-      searchResults.style.display = results.length ? "block" : "none";
+        searchResults.style.display = results.length ? "block" : "none";
+      } catch (e) {
+        console.error(e);
+        searchResults.style.display = "none";
+      }
     });
 
     function render() {
       portfolioBody.innerHTML = "";
-      let totalEUR = 0;
+      let totalValueEUR = 0;
+      let totalInvestedEUR = 0;
 
       positions.forEach((pos, index) => {
         const invested = pos.shares * pos.buyPrice;
@@ -190,7 +206,8 @@
         const result = value - invested;
         const pct = invested ? (result / invested) * 100 : 0;
 
-        totalEUR += value * pos.fxRate;
+        totalValueEUR += value * pos.fxRate;
+        totalInvestedEUR += invested * pos.fxRate;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -207,7 +224,16 @@
         portfolioBody.appendChild(tr);
       });
 
-      totalsLine.textContent = `Totale waarde (EUR): € ${totalEUR.toFixed(2)}`;
+      if (positions.length === 0) {
+        totalsLine.textContent = "Geen posities.";
+      } else {
+        const totalResultEUR = totalValueEUR - totalInvestedEUR;
+        const totalPct = totalInvestedEUR ? (totalResultEUR / totalInvestedEUR) * 100 : 0;
+        totalsLine.innerHTML =
+          `Totale inleg (EUR): € ${totalInvestedEUR.toFixed(2)} — ` +
+          `Totale waarde (EUR): € ${totalValueEUR.toFixed(2)} — ` +
+          `Totaal resultaat: <span class="${totalResultEUR >= 0 ? 'gain' : 'loss'}">€ ${totalResultEUR.toFixed(2)} (${totalPct.toFixed(1)}%)</span>`;
+      }
 
       document.querySelectorAll('button.secondary[data-index]').forEach(btn => {
         btn.onclick = () => {
@@ -219,21 +245,28 @@
     }
 
     function save() {
-      localStorage.setItem("portfolioApp", JSON.stringify({ positions }));
-      if (apiKeyInput.value) localStorage.setItem("alphaKey", apiKeyInput.value);
-      if (rapidKeyInput.value) localStorage.setItem("rapidKey", rapidKeyInput.value);
+      localStorage.setItem("portfolioAppFinnhub", JSON.stringify({ positions }));
+      if (finnhubKeyInput.value) {
+        localStorage.setItem("finnhubKey", finnhubKeyInput.value);
+      }
     }
 
     function load() {
-      const raw = localStorage.getItem("portfolioApp");
-      if (raw) positions = JSON.parse(raw).positions || [];
-      apiKeyInput.value = localStorage.getItem("alphaKey") || "";
-      rapidKeyInput.value = localStorage.getItem("rapidKey") || "";
+      const raw = localStorage.getItem("portfolioAppFinnhub");
+      if (raw) {
+        positions = JSON.parse(raw).positions || [];
+      }
+      const storedKey = localStorage.getItem("finnhubKey");
+      if (storedKey) {
+        finnhubKeyInput.value = storedKey;
+      } else {
+        // optioneel: hier kun je tijdelijk je key hardcoderen tijdens testen
+        // finnhubKeyInput.value = "YOUR_FINNHUB_API_KEY_HERE";
+      }
     }
 
     addButton.onclick = async () => {
-      const apiKey = apiKeyInput.value.trim();
-      const rapidKey = rapidKeyInput.value.trim();
+      const apiKey = finnhubKeyInput.value.trim();
       const ticker = tickerInput.value.trim().toUpperCase();
       const shares = Number(sharesInput.value);
       const buyPrice = Number(buyPriceInput.value);
@@ -247,11 +280,18 @@
       let fxRate = 1;
       const currency = getCurrencyForTicker(ticker);
 
-      try {
-        price = await fetchPrice(ticker, apiKey);
-        fxRate = await fetchFxRate(currency, apiKey);
-      } catch (e) {
-        alert(e.message + " — positie wordt toch toegevoegd.");
+      if (!apiKey) {
+        alert("Geen Finnhub key ingevuld. Positie wordt toegevoegd met koers 0 en zonder FX‑conversie.");
+      } else {
+        try {
+          price = await fetchPrice(ticker, apiKey);
+          if (!fxRatesCache) {
+            fxRatesCache = await fetchFxRates(apiKey);
+          }
+          fxRate = getFxRateForCurrency(currency, fxRatesCache);
+        } catch (e) {
+          alert(e.message + " — positie wordt toch toegevoegd.");
+        }
       }
 
       positions.push({ ticker, shares, buyPrice, currentPrice: price, currency, fxRate });
@@ -265,18 +305,27 @@
     };
 
     refreshButton.onclick = async () => {
-      const apiKey = apiKeyInput.value.trim();
-      if (!apiKey) return alert("Voer je Alpha Vantage key in.");
+      const apiKey = finnhubKeyInput.value.trim();
+      if (!apiKey) {
+        alert("Voer je Finnhub API key in.");
+        return;
+      }
 
       refreshButton.disabled = true;
       refreshButton.textContent = "Bezig...";
 
+      try {
+        fxRatesCache = await fetchFxRates(apiKey);
+      } catch (e) {
+        alert("Kon FX‑rates niet verversen: " + e.message);
+      }
+
       for (let pos of positions) {
         try {
           pos.currentPrice = await fetchPrice(pos.ticker, apiKey);
-          pos.fxRate = await fetchFxRate(pos.currency, apiKey);
+          pos.fxRate = getFxRateForCurrency(pos.currency, fxRatesCache || {});
         } catch (e) {
-          alert(e.message);
+          alert("Fout bij verversen van " + pos.ticker + ": " + e.message);
         }
       }
 
@@ -294,6 +343,8 @@
         render();
       }
     };
+
+    finnhubKeyInput.addEventListener('input', save);
 
     load();
     render();
