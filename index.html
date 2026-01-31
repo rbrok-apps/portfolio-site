@@ -93,6 +93,8 @@
 let positions = [];
 let fxRatesCache = null;
 
+const TWELVEDATA_KEY = "ad11e6f868624979abc929dd57f36329";
+
 const searchInput = document.getElementById("searchInput");
 const searchResults = document.getElementById("searchResults");
 const tickerInput = document.getElementById("ticker");
@@ -132,21 +134,16 @@ function getFxRate(currency, rates) {
   return 1 / rates[currency];
 }
 
-async function fetchYahooPrice(ticker) {
-  const url = `https://yfapi-proxy.vercel.app/chart/${ticker}`;
+async function fetchPrice(ticker) {
+  const url = `https://api.twelvedata.com/price?symbol=${ticker}&apikey=${TWELVEDATA_KEY}`;
   const r = await fetch(url);
   const d = await r.json();
 
-  if (!d.chart || !d.chart.result || !d.chart.result[0]) {
+  if (!d || !d.price) {
     throw new Error("Geen koersdata");
   }
 
-  const meta = d.chart.result[0].meta;
-  if (!meta || !meta.regularMarketPrice) {
-    throw new Error("Geen koers gevonden");
-  }
-
-  return meta.regularMarketPrice;
+  return Number(d.price);
 }
 
 async function searchFinnhub(query, apiKey) {
@@ -260,7 +257,7 @@ async function refreshAllPrices() {
   fxRatesCache = await fetchFxRates(finnhubKey);
 
   for (const pos of positions) {
-    pos.currentPrice = await fetchYahooPrice(pos.ticker);
+    pos.currentPrice = await fetchPrice(pos.ticker);
     pos.fxRate = getFxRate(pos.currency, fxRatesCache);
   }
 
@@ -294,7 +291,7 @@ document.getElementById("addPosition").onclick = async () => {
   const currency = getCurrencyForTicker(ticker);
 
   try {
-    price = await fetchYahooPrice(ticker);
+    price = await fetchPrice(ticker);
     if (!fxRatesCache) fxRatesCache = await fetchFxRates(finnhubKey);
     fxRate = getFxRate(currency, fxRatesCache);
   } catch (e) {
