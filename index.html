@@ -55,11 +55,12 @@
       <input type="number" id="buyPrice" step="0.01" />
     </label>
 
-    <button type="button" id="addPosition">Toevoegen (API koers)</button>
+    <button type="button" id="addPosition">Toevoegen</button>
     <button type="button" class="secondary" id="clearAll">Alles wissen</button>
 
     <p class="small">
-      De huidige koers wordt automatisch opgehaald via Alpha Vantage.
+      De huidige koers wordt automatisch opgehaald via Alpha Vantage.  
+      Als dat niet lukt, wordt de positie toch toegevoegd.
     </p>
   </div>
 
@@ -169,4 +170,109 @@
     }
 
     function save() {
-      local
+      localStorage.setItem('portfolioApp', JSON.stringify({
+        positions,
+        startCapital: Number(startCapitalInput.value),
+        cash: Number(cashInput.value)
+      }));
+    }
+
+    function load() {
+      const raw = localStorage.getItem('portfolioApp');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      positions = data.positions || [];
+      startCapitalInput.value = data.startCapital;
+      cashInput.value = data.cash;
+    }
+
+    async function fetchPrice(ticker, apiKey) {
+      const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${apiKey}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data["Global Quote"] || !data["Global Quote"]["05. price"]) {
+        throw new Error("Ticker niet gevonden: " + ticker);
+      }
+      return Number(data["Global Quote"]["05. price"]);
+    }
+
+    addButton.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      let ticker = tickerInput.value.trim().toUpperCase();
+      const shares = Number(sharesInput.value);
+      const buyPrice = Number(buyPriceInput.value);
+
+      if (!ticker || shares <= 0 || buyPrice <= 0) {
+        alert("Vul alle velden correct in.");
+        return;
+      }
+
+      let price = 0;
+
+      if (!apiKey) {
+        alert("Geen API key ingevuld. Positie wordt toegevoegd met koers 0.");
+      } else {
+        try {
+          price = await fetchPrice(ticker, apiKey);
+        } catch (e) {
+          alert(e.message + ". Positie wordt toch toegevoegd.");
+        }
+      }
+
+      positions.push({
+        ticker,
+        shares,
+        buyPrice,
+        currentPrice: price
+      });
+
+      tickerInput.value = '';
+      sharesInput.value = '';
+      buyPriceInput.value = '';
+
+      save();
+      render();
+    });
+
+    refreshButton.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        alert("Voer je API key in.");
+        return;
+      }
+
+      refreshButton.disabled = true;
+      refreshButton.textContent = "Bezig...";
+
+      for (let pos of positions) {
+        try {
+          pos.currentPrice = await fetchPrice(pos.ticker, apiKey);
+        } catch (e) {
+          alert(e.message);
+        }
+      }
+
+      save();
+      render();
+
+      refreshButton.disabled = false;
+      refreshButton.textContent = "Koersen verversen";
+    });
+
+    clearButton.addEventListener('click', () => {
+      if (confirm("Alles wissen?")) {
+        positions = [];
+        save();
+        render();
+      }
+    });
+
+    startCapitalInput.addEventListener('input', () => { save(); render(); });
+    cashInput.addEventListener('input', () => { save(); render(); });
+
+    load();
+    render();
+  </script>
+</body>
+</html>
