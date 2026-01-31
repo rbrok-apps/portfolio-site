@@ -21,18 +21,28 @@
     .gain { color:green; }
     .loss { color:#c00; }
     .small { font-size:0.75rem; color:#666; }
-    .api-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-    .api-row input { flex:1; min-width:160px; }
+    .search-results { background:white; border:1px solid #ccc; border-radius:6px; margin-top:4px; max-height:200px; overflow-y:auto; }
+    .search-item { padding:8px; border-bottom:1px solid #eee; cursor:pointer; }
+    .search-item:hover { background:#f0f0f0; }
   </style>
 </head>
 <body>
   <h1>Mijn Aandelen & ETF portefeuille</h1>
 
   <div class="card">
+    <h2>Aandeel / ETF zoeken</h2>
+    <label>
+      Zoek op naam
+      <input type="text" id="searchInput" placeholder="Bijv. ASML, Vanguard, Tesla" />
+    </label>
+    <div id="searchResults" class="search-results" style="display:none;"></div>
+  </div>
+
+  <div class="card">
     <h2>Positie toevoegen</h2>
     <label>
-      Ticker / Naam
-      <input type="text" id="ticker" placeholder="Bijv. ASML.AMS, AAPL, VWRL.AMS" />
+      Ticker
+      <input type="text" id="ticker" placeholder="Bijv. ASML.AMS, AAPL" />
     </label>
     <label>
       Aantal stuks
@@ -45,11 +55,6 @@
 
     <button type="button" id="addPosition">Toevoegen</button>
     <button type="button" class="secondary" id="clearAll">Alles wissen</button>
-
-    <p class="small">
-      De huidige koers wordt automatisch opgehaald via Alpha Vantage.  
-      Als dat niet lukt, wordt de positie toch toegevoegd met koers 0.
-    </p>
   </div>
 
   <div class="card">
@@ -74,17 +79,21 @@
   </div>
 
   <div class="card">
-    <h2>API (Alpha Vantage)</h2>
-    <div class="api-row">
-      <input type="text" id="apiKey" placeholder="Je Alpha Vantage API key" />
-      <button type="button" id="refreshPrices">Koersen verversen</button>
-    </div>
-    <p class="small">
-      De API key wordt lokaal opgeslagen totdat je hem wijzigt.
-    </p>
+    <h2>API Keys</h2>
+    <label>
+      Alpha Vantage API key
+      <input type="text" id="apiKey" placeholder="Alpha Vantage key" />
+    </label>
+    <label>
+      RapidAPI key (Yahoo Finance)
+      <input type="text" id="rapidKey" placeholder="RapidAPI key" />
+    </label>
+    <button type="button" id="refreshPrices">Koersen verversen</button>
   </div>
 
   <script>
+    const searchInput = document.getElementById('searchInput');
+    const searchResults = document.getElementById('searchResults');
     const tickerInput = document.getElementById('ticker');
     const sharesInput = document.getElementById('shares');
     const buyPriceInput = document.getElementById('buyPrice');
@@ -94,82 +103,94 @@
     const totalsLine = document.getElementById('totalsLine');
     const refreshButton = document.getElementById('refreshPrices');
     const apiKeyInput = document.getElementById('apiKey');
+    const rapidKeyInput = document.getElementById('rapidKey');
 
     let positions = [];
 
-    /* -----------------------------
-       TICKER ALTIJD IN HOOFDLETTERS
-    ------------------------------*/
     tickerInput.addEventListener('input', () => {
       tickerInput.value = tickerInput.value.toUpperCase();
     });
 
-    /* -----------------------------
-       VALUTA OP BASIS VAN SUFFIX
-    ------------------------------*/
     function getCurrencyForTicker(ticker) {
-      if (ticker.endsWith(".AMS")) return "EUR";
+      if (ticker.endsWith(".AS") || ticker.endsWith(".AMS")) return "EUR";
       if (ticker.endsWith(".BRU")) return "EUR";
       if (ticker.endsWith(".PAR")) return "EUR";
       if (ticker.endsWith(".FRA")) return "EUR";
       if (ticker.endsWith(".LON")) return "GBP";
-      if (ticker.endsWith(".NYSE")) return "USD";
-      if (ticker.endsWith(".NASDAQ")) return "USD";
       return "USD";
     }
 
     function formatCurrency(value, currency) {
       const symbols = { EUR: "€", USD: "$", GBP: "£" };
-      const symbol = symbols[currency] || "";
-      return symbol + " " + value.toFixed(2).replace('.', ',');
+      return symbols[currency] + " " + value.toFixed(2);
     }
 
-    /* -----------------------------
-       FX RATES OPHALEN
-    ------------------------------*/
     async function fetchFxRate(from, apiKey) {
       if (from === "EUR") return 1;
-
       const url = `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=${from}&to_currency=EUR&apikey=${apiKey}`;
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (!data["Realtime Currency Exchange Rate"]) {
-        throw new Error("FX rate niet gevonden voor " + from);
-      }
-
-      return Number(data["Realtime Currency Exchange Rate"]["5. Exchange Rate"]);
+      const r = await fetch(url);
+      const d = await r.json();
+      return Number(d["Realtime Currency Exchange Rate"]["5. Exchange Rate"]);
     }
 
-    /* -----------------------------
-       KOERS OPHALEN (EUROPA VIA DAILY)
-    ------------------------------*/
     async function fetchPrice(ticker, apiKey) {
       const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${apiKey}`;
-      const response = await fetch(url);
-      const data = await response.json();
-
-      const series = data["Time Series (Daily)"];
+      const r = await fetch(url);
+      const d = await r.json();
+      const series = d["Time Series (Daily)"];
       if (!series) throw new Error("Ticker niet gevonden: " + ticker);
-
       const latest = Object.keys(series)[0];
       return Number(series[latest]["4. close"]);
     }
 
-    /* -----------------------------
-       RENDEREN VAN DE TABEL
-    ------------------------------*/
+    async function searchYahoo(query, rapidKey) {
+      const url = `https://yfapi.net/v6/finance/autocomplete?query=${query}`;
+      const r = await fetch(url, {
+        headers: {
+          "X-RapidAPI-Key": rapidKey,
+          "X-RapidAPI-Host": "yfapi.net"
+        }
+      });
+      const d = await r.json();
+      return d.result || [];
+    }
+
+    searchInput.addEventListener('input', async () => {
+      const q = searchInput.value.trim();
+      const rapidKey = rapidKeyInput.value.trim();
+      if (!q || !rapidKey) {
+        searchResults.style.display = "none";
+        return;
+      }
+
+      const results = await searchYahoo(q, rapidKey);
+
+      searchResults.innerHTML = "";
+      results.forEach(item => {
+        const div = document.createElement('div');
+        div.className = "search-item";
+        div.textContent = `${item.symbol} — ${item.shortname}`;
+        div.addEventListener('click', () => {
+          tickerInput.value = item.symbol.toUpperCase();
+          searchResults.style.display = "none";
+        });
+        searchResults.appendChild(div);
+      });
+
+      searchResults.style.display = results.length ? "block" : "none";
+    });
+
     function render() {
-      portfolioBody.innerHTML = '';
-      let totalValueEUR = 0;
+      portfolioBody.innerHTML = "";
+      let totalEUR = 0;
 
       positions.forEach((pos, index) => {
         const invested = pos.shares * pos.buyPrice;
         const value = pos.shares * pos.currentPrice;
         const result = value - invested;
-        const pct = invested === 0 ? 0 : (result / invested) * 100;
+        const pct = invested ? (result / invested) * 100 : 0;
 
-        totalValueEUR += value * pos.fxRate;
+        totalEUR += value * pos.fxRate;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -180,47 +201,40 @@
           <td>${formatCurrency(invested, pos.currency)}</td>
           <td>${formatCurrency(value, pos.currency)}</td>
           <td class="${result >= 0 ? 'gain' : 'loss'}">${formatCurrency(result, pos.currency)}</td>
-          <td class="${pct >= 0 ? 'gain' : 'loss'}">${pct.toFixed(1)}%</td>
-          <td><button type="button" class="secondary" data-index="${index}">X</button></td>
+          <td>${pct.toFixed(1)}%</td>
+          <td><button class="secondary" data-index="${index}">X</button></td>
         `;
         portfolioBody.appendChild(tr);
       });
 
-      totalsLine.innerHTML =
-        `Totale waarde (EUR): € ${totalValueEUR.toFixed(2)} — ` +
-        `Totaal rendement: <span class="${totalValueEUR >= 0 ? 'gain' : 'loss'}">€ ${totalValueEUR.toFixed(2)}</span>`;
+      totalsLine.textContent = `Totale waarde (EUR): € ${totalEUR.toFixed(2)}`;
 
       document.querySelectorAll('button.secondary[data-index]').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.onclick = () => {
           positions.splice(Number(btn.dataset.index), 1);
           save();
           render();
-        });
+        };
       });
     }
 
-    /* -----------------------------
-       OPSLAAN & LADEN
-    ------------------------------*/
     function save() {
-      localStorage.setItem('portfolioApp', JSON.stringify({ positions }));
-      const apiKey = apiKeyInput.value.trim();
-      if (apiKey) localStorage.setItem('portfolioApiKey', apiKey);
+      localStorage.setItem("portfolioApp", JSON.stringify({ positions }));
+      if (apiKeyInput.value) localStorage.setItem("alphaKey", apiKeyInput.value);
+      if (rapidKeyInput.value) localStorage.setItem("rapidKey", rapidKeyInput.value);
     }
 
     function load() {
-      const raw = localStorage.getItem('portfolioApp');
+      const raw = localStorage.getItem("portfolioApp");
       if (raw) positions = JSON.parse(raw).positions || [];
-      const storedKey = localStorage.getItem('portfolioApiKey');
-      if (storedKey) apiKeyInput.value = storedKey;
+      apiKeyInput.value = localStorage.getItem("alphaKey") || "";
+      rapidKeyInput.value = localStorage.getItem("rapidKey") || "";
     }
 
-    /* -----------------------------
-       POSITIE TOEVOEGEN
-    ------------------------------*/
-    addButton.addEventListener('click', async () => {
+    addButton.onclick = async () => {
       const apiKey = apiKeyInput.value.trim();
-      let ticker = tickerInput.value.trim().toUpperCase();
+      const rapidKey = rapidKeyInput.value.trim();
+      const ticker = tickerInput.value.trim().toUpperCase();
       const shares = Number(sharesInput.value);
       const buyPrice = Number(buyPriceInput.value);
 
@@ -233,43 +247,26 @@
       let fxRate = 1;
       const currency = getCurrencyForTicker(ticker);
 
-      if (!apiKey) {
-        alert("Geen API key ingevuld. Positie wordt toegevoegd met koers 0.");
-      } else {
-        try {
-          price = await fetchPrice(ticker, apiKey);
-          fxRate = await fetchFxRate(currency, apiKey);
-        } catch (e) {
-          alert(e.message + ". Positie wordt toch toegevoegd.");
-        }
+      try {
+        price = await fetchPrice(ticker, apiKey);
+        fxRate = await fetchFxRate(currency, apiKey);
+      } catch (e) {
+        alert(e.message + " — positie wordt toch toegevoegd.");
       }
 
-      positions.push({
-        ticker,
-        shares,
-        buyPrice,
-        currentPrice: price,
-        currency,
-        fxRate
-      });
+      positions.push({ ticker, shares, buyPrice, currentPrice: price, currency, fxRate });
 
-      tickerInput.value = '';
-      sharesInput.value = '';
-      buyPriceInput.value = '';
+      tickerInput.value = "";
+      sharesInput.value = "";
+      buyPriceInput.value = "";
 
       save();
       render();
-    });
+    };
 
-    /* -----------------------------
-       KOERSEN VERVERSEN
-    ------------------------------*/
-    refreshButton.addEventListener('click', async () => {
+    refreshButton.onclick = async () => {
       const apiKey = apiKeyInput.value.trim();
-      if (!apiKey) {
-        alert("Voer je API key in.");
-        return;
-      }
+      if (!apiKey) return alert("Voer je Alpha Vantage key in.");
 
       refreshButton.disabled = true;
       refreshButton.textContent = "Bezig...";
@@ -288,20 +285,15 @@
 
       refreshButton.disabled = false;
       refreshButton.textContent = "Koersen verversen";
-    });
+    };
 
-    /* -----------------------------
-       ALLES WISSEN
-    ------------------------------*/
-    clearButton.addEventListener('click', () => {
+    clearButton.onclick = () => {
       if (confirm("Alles wissen?")) {
         positions = [];
         save();
         render();
       }
-    });
-
-    apiKeyInput.addEventListener('input', () => save());
+    };
 
     load();
     render();
