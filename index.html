@@ -29,18 +29,6 @@
   <h1>Mijn Aandelen & ETF portefeuille</h1>
 
   <div class="card">
-    <h2>Instellingen</h2>
-    <label>
-      Startkapitaal (EUR)
-      <input type="number" id="startCapital" value="10000" step="100" />
-    </label>
-    <label>
-      Beschikbaar cash (EUR)
-      <input type="number" id="cash" value="2500" step="100" />
-    </label>
-  </div>
-
-  <div class="card">
     <h2>Positie toevoegen</h2>
     <label>
       Ticker / Naam
@@ -83,7 +71,6 @@
       <tbody id="portfolioBody"></tbody>
     </table>
     <p class="summary" id="totalsLine"></p>
-    <p class="small" id="allocationLine"></p>
   </div>
 
   <div class="card">
@@ -98,8 +85,6 @@
   </div>
 
   <script>
-    const startCapitalInput = document.getElementById('startCapital');
-    const cashInput = document.getElementById('cash');
     const tickerInput = document.getElementById('ticker');
     const sharesInput = document.getElementById('shares');
     const buyPriceInput = document.getElementById('buyPrice');
@@ -107,7 +92,6 @@
     const clearButton = document.getElementById('clearAll');
     const portfolioBody = document.getElementById('portfolioBody');
     const totalsLine = document.getElementById('totalsLine');
-    const allocationLine = document.getElementById('allocationLine');
     const refreshButton = document.getElementById('refreshPrices');
     const apiKeyInput = document.getElementById('apiKey');
 
@@ -185,9 +169,7 @@
         const result = value - invested;
         const pct = invested === 0 ? 0 : (result / invested) * 100;
 
-        // EUR conversie
-        const fx = pos.fxRate || 1;
-        totalValueEUR += value * fx;
+        totalValueEUR += value * pos.fxRate;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -204,15 +186,9 @@
         portfolioBody.appendChild(tr);
       });
 
-      const cash = Number(cashInput.value) || 0;
-      const startCapital = Number(startCapitalInput.value) || 0;
-      const totalWithCash = totalValueEUR + cash;
-      const totalResult = totalWithCash - startCapital;
-      const totalPct = startCapital === 0 ? 0 : (totalResult / startCapital) * 100;
-
       totalsLine.innerHTML =
-        `Totale waarde (EUR): € ${totalWithCash.toFixed(2)} (cash € ${cash.toFixed(2)}). ` +
-        `Resultaat: <span class="${totalResult >= 0 ? 'gain' : 'loss'}">€ ${totalResult.toFixed(2)} (${totalPct.toFixed(1)}%)</span>`;
+        `Totale waarde (EUR): € ${totalValueEUR.toFixed(2)} — ` +
+        `Totaal rendement: <span class="${totalValueEUR >= 0 ? 'gain' : 'loss'}">€ ${totalValueEUR.toFixed(2)}</span>`;
 
       document.querySelectorAll('button.secondary[data-index]').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -227,15 +203,108 @@
        OPSLAAN & LADEN
     ------------------------------*/
     function save() {
-      localStorage.setItem('portfolioApp', JSON.stringify({
-        positions,
-        startCapital: Number(startCapitalInput.value),
-        cash: Number(cashInput.value)
-      }));
-
+      localStorage.setItem('portfolioApp', JSON.stringify({ positions }));
       const apiKey = apiKeyInput.value.trim();
       if (apiKey) localStorage.setItem('portfolioApiKey', apiKey);
     }
 
     function load() {
-      const raw = localStorage.getItem('portfolio
+      const raw = localStorage.getItem('portfolioApp');
+      if (raw) positions = JSON.parse(raw).positions || [];
+      const storedKey = localStorage.getItem('portfolioApiKey');
+      if (storedKey) apiKeyInput.value = storedKey;
+    }
+
+    /* -----------------------------
+       POSITIE TOEVOEGEN
+    ------------------------------*/
+    addButton.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      let ticker = tickerInput.value.trim().toUpperCase();
+      const shares = Number(sharesInput.value);
+      const buyPrice = Number(buyPriceInput.value);
+
+      if (!ticker || shares <= 0 || buyPrice <= 0) {
+        alert("Vul alle velden correct in.");
+        return;
+      }
+
+      let price = 0;
+      let fxRate = 1;
+      const currency = getCurrencyForTicker(ticker);
+
+      if (!apiKey) {
+        alert("Geen API key ingevuld. Positie wordt toegevoegd met koers 0.");
+      } else {
+        try {
+          price = await fetchPrice(ticker, apiKey);
+          fxRate = await fetchFxRate(currency, apiKey);
+        } catch (e) {
+          alert(e.message + ". Positie wordt toch toegevoegd.");
+        }
+      }
+
+      positions.push({
+        ticker,
+        shares,
+        buyPrice,
+        currentPrice: price,
+        currency,
+        fxRate
+      });
+
+      tickerInput.value = '';
+      sharesInput.value = '';
+      buyPriceInput.value = '';
+
+      save();
+      render();
+    });
+
+    /* -----------------------------
+       KOERSEN VERVERSEN
+    ------------------------------*/
+    refreshButton.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        alert("Voer je API key in.");
+        return;
+      }
+
+      refreshButton.disabled = true;
+      refreshButton.textContent = "Bezig...";
+
+      for (let pos of positions) {
+        try {
+          pos.currentPrice = await fetchPrice(pos.ticker, apiKey);
+          pos.fxRate = await fetchFxRate(pos.currency, apiKey);
+        } catch (e) {
+          alert(e.message);
+        }
+      }
+
+      save();
+      render();
+
+      refreshButton.disabled = false;
+      refreshButton.textContent = "Koersen verversen";
+    });
+
+    /* -----------------------------
+       ALLES WISSEN
+    ------------------------------*/
+    clearButton.addEventListener('click', () => {
+      if (confirm("Alles wissen?")) {
+        positions = [];
+        save();
+        render();
+      }
+    });
+
+    apiKeyInput.addEventListener('input', () => save());
+
+    load();
+    render();
+  </script>
+</body>
+</html>
