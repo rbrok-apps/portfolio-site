@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Aandelenportefeuille</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 16px; background:#f5f5f5; }
+    h1 { font-size: 1.4rem; }
+    .card { background:white; padding:12px; margin-bottom:12px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+    label { display:block; font-size:0.85rem; margin-top:6px; }
+    input { width:100%; padding:6px 8px; margin-top:2px; border-radius:4px; border:1px solid #ccc; font-size:0.9rem; box-sizing:border-box; }
+    button { margin-top:10px; padding:8px 12px; border:none; border-radius:6px; background:#007aff; color:white; font-size:0.9rem; cursor:pointer; }
+    button.secondary { background:#eee; color:#333; margin-left:6px; }
+    button:disabled { opacity:0.6; cursor:default; }
+    table { width:100%; border-collapse:collapse; margin-top:8px; font-size:0.8rem; }
+    th, td { padding:6px 4px; text-align:right; }
+    th:first-child, td:first-child { text-align:left; }
+    tr:nth-child(even) { background:#fafafa; }
+    .summary { font-weight:bold; margin-top:4px; }
+    .gain { color:green; }
+    .loss { color:#c00; }
+    .small { font-size:0.75rem; color:#666; }
+    .api-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .api-row input { flex:1; min-width:160px; }
+    .badge { display:inline-block; padding:2px 6px; border-radius:4px; font-size:0.7rem; background:#eee; margin-left:4px; }
+  </style>
+</head>
+<body>
+  <h1>Mijn Aandelen & ETF portefeuille</h1>
+
+  <div class="card">
+    <h2>Instellingen</h2>
+    <label>
+      Startkapitaal (€)
+      <input type="number" id="startCapital" value="10000" step="100" />
+    </label>
+    <label>
+      Beschikbaar cash (€)
+      <input type="number" id="cash" value="2500" step="100" />
+    </label>
+    <p class="small">
+      Startkapitaal gebruik je om je totale rendement te berekenen. Cash telt mee in de totale waarde.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Positie toevoegen</h2>
+    <label>
+      Ticker / Naam
+      <input type="text" id="ticker" placeholder="Bijv. VWRL, AAPL, IWDA" />
+    </label>
+    <label>
+      Aantal stuks
+      <input type="number" id="shares" step="1" />
+    </label>
+    <label>
+      Gemiddelde aankoopprijs (€)
+      <input type="number" id="buyPrice" step="0.01" />
+    </label>
+    <label>
+      Huidige koers (€)
+      <input type="number" id="currentPrice" step="0.01" />
+    </label>
+    <button id="addPosition">Toevoegen</button>
+    <button class="secondary" id="clearAll">Alles wissen</button>
+    <p class="small">
+      Tip: vul eerst handmatig koersen in. Later kun je eventueel een API koppelen.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Portefeuille</h2>
+    <table id="portfolioTable">
+      <thead>
+        <tr>
+          <th>Positie</th>
+          <th>Stuks</th>
+          <th>Gem. aankoop</th>
+          <th>Huidige koers</th>
+          <th>Inleg</th>
+          <th>Waarde</th>
