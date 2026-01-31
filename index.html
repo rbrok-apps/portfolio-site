@@ -44,7 +44,7 @@
     <h2>Positie toevoegen</h2>
     <label>
       Ticker / Naam
-      <input type="text" id="ticker" placeholder="Bijv. VWRL, AAPL, IWDA" />
+      <input type="text" id="ticker" placeholder="Bijv. ASML.AMS, AAPL, VWRL.AMS" />
     </label>
     <label>
       Aantal stuks
@@ -54,14 +54,12 @@
       Gemiddelde aankoopprijs (€)
       <input type="number" id="buyPrice" step="0.01" />
     </label>
-    <label>
-      Huidige koers (€)
-      <input type="number" id="currentPrice" step="0.01" />
-    </label>
-    <button type="button" id="addPosition">Toevoegen</button>
+
+    <button type="button" id="addPosition">Toevoegen (API koers)</button>
     <button type="button" class="secondary" id="clearAll">Alles wissen</button>
+
     <p class="small">
-      Tip: vul bij het toevoegen eerst zelf een huidige koers in. De API‑knop is om later te verversen.
+      De huidige koers wordt automatisch opgehaald via Alpha Vantage.
     </p>
   </div>
 
@@ -90,12 +88,9 @@
   <div class="card">
     <h2>API (Alpha Vantage)</h2>
     <div class="api-row">
-      <input type="text" id="apiKey" placeholder="Je Alpha Vantage API key (niet de link)" />
+      <input type="text" id="apiKey" placeholder="Je Alpha Vantage API key" />
       <button type="button" id="refreshPrices">Koersen verversen</button>
     </div>
-    <p class="small">
-      Vul hier je <strong>API key</strong> in (bijv. <code>ABCD1234...</code>) die je van Alpha Vantage krijgt. Geen URL.
-    </p>
   </div>
 
   <script>
@@ -104,7 +99,6 @@
     const tickerInput = document.getElementById('ticker');
     const sharesInput = document.getElementById('shares');
     const buyPriceInput = document.getElementById('buyPrice');
-    const currentPriceInput = document.getElementById('currentPrice');
     const addButton = document.getElementById('addPosition');
     const clearButton = document.getElementById('clearAll');
     const portfolioBody = document.getElementById('portfolioBody');
@@ -121,7 +115,6 @@
 
     function render() {
       portfolioBody.innerHTML = '';
-      let totalInvested = 0;
       let totalValue = 0;
 
       positions.forEach((pos, index) => {
@@ -130,7 +123,6 @@
         const result = value - invested;
         const pct = invested === 0 ? 0 : (result / invested) * 100;
 
-        totalInvested += invested;
         totalValue += value;
 
         const tr = document.createElement('tr');
@@ -169,8 +161,7 @@
 
       document.querySelectorAll('button.secondary[data-index]').forEach(btn => {
         btn.addEventListener('click', () => {
-          const idx = Number(btn.getAttribute('data-index'));
-          positions.splice(idx, 1);
+          positions.splice(Number(btn.dataset.index), 1);
           save();
           render();
         });
@@ -178,102 +169,4 @@
     }
 
     function save() {
-      const data = {
-        positions,
-        startCapital: Number(startCapitalInput.value) || 0,
-        cash: Number(cashInput.value) || 0
-      };
-      localStorage.setItem('portfolioApp', JSON.stringify(data));
-    }
-
-    function load() {
-      const raw = localStorage.getItem('portfolioApp');
-      if (!raw) return;
-      try {
-        const data = JSON.parse(raw);
-        positions = Array.isArray(data.positions) ? data.positions : [];
-        if (typeof data.startCapital === 'number') startCapitalInput.value = data.startCapital;
-        if (typeof data.cash === 'number') cashInput.value = data.cash;
-      } catch (e) {
-        console.warn('Kon opgeslagen data niet lezen', e);
-      }
-    }
-
-    async function fetchPrice(ticker, apiKey) {
-      const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(apiKey)}`;
-      const response = await fetch(url);
-      const data = await response.json();
-      if (!data["Global Quote"] || !data["Global Quote"]["05. price"]) {
-        throw new Error("Geen koers gevonden voor " + ticker);
-      }
-      return Number(data["Global Quote"]["05. price"]);
-    }
-
-    refreshButton.addEventListener('click', async () => {
-      const apiKey = apiKeyInput.value.trim();
-      if (!apiKey) {
-        alert("Vul je Alpha Vantage API key in (niet de URL).");
-        return;
-      }
-      if (positions.length === 0) {
-        alert("Er zijn geen posities om te verversen.");
-        return;
-      }
-
-      refreshButton.disabled = true;
-      refreshButton.textContent = "Bezig...";
-
-      try {
-        for (let pos of positions) {
-          const price = await fetchPrice(pos.ticker, apiKey);
-          pos.currentPrice = price;
-        }
-        save();
-        render();
-        alert("Koersen bijgewerkt.");
-      } catch (e) {
-        alert("Fout bij ophalen koersen: " + e.message);
-      }
-
-      refreshButton.disabled = false;
-      refreshButton.textContent = "Koersen verversen";
-    });
-
-    addButton.addEventListener('click', () => {
-      const ticker = tickerInput.value.trim();
-      const shares = Number(sharesInput.value);
-      const buyPrice = Number(buyPriceInput.value);
-      const currentPrice = Number(currentPriceInput.value);
-
-      if (!ticker || !Number.isFinite(shares) || shares <= 0 ||
-          !Number.isFinite(buyPrice) || buyPrice <= 0 ||
-          !Number.isFinite(currentPrice) || currentPrice <= 0) {
-        alert("Vul alle velden correct in (ticker, stuks, aankoopprijs, huidige koers).");
-        return;
-      }
-
-      positions.push({ ticker, shares, buyPrice, currentPrice });
-      tickerInput.value = '';
-      sharesInput.value = '';
-      buyPriceInput.value = '';
-      currentPriceInput.value = '';
-
-      save();
-      render();
-    });
-
-    clearButton.addEventListener('click', () => {
-      if (!confirm("Weet je zeker dat je alles wilt wissen?")) return;
-      positions = [];
-      save();
-      render();
-    });
-
-    startCapitalInput.addEventListener('input', () => { save(); render(); });
-    cashInput.addEventListener('input', () => { save(); render(); });
-
-    load();
-    render();
-  </script>
-</body>
-</html>
+      local
