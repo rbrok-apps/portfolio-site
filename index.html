@@ -133,7 +133,7 @@ function getFxRate(currency, rates) {
 }
 
 async function fetchYahooPrice(ticker) {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}`;
+  const url = `https://yfapi-proxy.vercel.app/chart/${ticker}`;
   const r = await fetch(url);
   const d = await r.json();
 
