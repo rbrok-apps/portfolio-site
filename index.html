@@ -141,11 +141,43 @@
     }
 
     /* -----------------------------
+       FX RATES OPHALEN
+    ------------------------------*/
+    async function fetchFxRate(from, apiKey) {
+      if (from === "EUR") return 1;
+
+      const url = `https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=${from}&to_currency=EUR&apikey=${apiKey}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (!data["Realtime Currency Exchange Rate"]) {
+        throw new Error("FX rate niet gevonden voor " + from);
+      }
+
+      return Number(data["Realtime Currency Exchange Rate"]["5. Exchange Rate"]);
+    }
+
+    /* -----------------------------
+       KOERS OPHALEN (EUROPA VIA DAILY)
+    ------------------------------*/
+    async function fetchPrice(ticker, apiKey) {
+      const url = `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${ticker}&apikey=${apiKey}`;
+      const response = await fetch(url);
+      const data = await response.json();
+
+      const series = data["Time Series (Daily)"];
+      if (!series) throw new Error("Ticker niet gevonden: " + ticker);
+
+      const latest = Object.keys(series)[0];
+      return Number(series[latest]["4. close"]);
+    }
+
+    /* -----------------------------
        RENDEREN VAN DE TABEL
     ------------------------------*/
     function render() {
       portfolioBody.innerHTML = '';
-      let totalValueBase = 0;
+      let totalValueEUR = 0;
 
       positions.forEach((pos, index) => {
         const invested = pos.shares * pos.buyPrice;
@@ -153,7 +185,9 @@
         const result = value - invested;
         const pct = invested === 0 ? 0 : (result / invested) * 100;
 
-        totalValueBase += value;
+        // EUR conversie
+        const fx = pos.fxRate || 1;
+        totalValueEUR += value * fx;
 
         const tr = document.createElement('tr');
         tr.innerHTML = `
@@ -172,22 +206,13 @@
 
       const cash = Number(cashInput.value) || 0;
       const startCapital = Number(startCapitalInput.value) || 0;
-      const totalWithCash = totalValueBase + cash;
+      const totalWithCash = totalValueEUR + cash;
       const totalResult = totalWithCash - startCapital;
       const totalPct = startCapital === 0 ? 0 : (totalResult / startCapital) * 100;
 
       totalsLine.innerHTML =
-        `Totale waarde (indicatief in EUR): € ${totalWithCash.toFixed(2)} (cash € ${cash.toFixed(2)}). ` +
+        `Totale waarde (EUR): € ${totalWithCash.toFixed(2)} (cash € ${cash.toFixed(2)}). ` +
         `Resultaat: <span class="${totalResult >= 0 ? 'gain' : 'loss'}">€ ${totalResult.toFixed(2)} (${totalPct.toFixed(1)}%)</span>`;
-
-      if (totalWithCash > 0) {
-        const equityPct = (totalValueBase / totalWithCash) * 100;
-        const cashPct = (cash / totalWithCash) * 100;
-        allocationLine.textContent =
-          `Verdeling: aandelen/ETF ${equityPct.toFixed(1)}% • cash ${cashPct.toFixed(1)}%`;
-      } else {
-        allocationLine.textContent = '';
-      }
 
       document.querySelectorAll('button.secondary[data-index]').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -213,119 +238,4 @@
     }
 
     function load() {
-      const raw = localStorage.getItem('portfolioApp');
-      if (raw) {
-        const data = JSON.parse(raw);
-        positions = data.positions || [];
-        startCapitalInput.value = data.startCapital;
-        cashInput.value = data.cash;
-      }
-
-      const storedKey = localStorage.getItem('portfolioApiKey');
-      if (storedKey) apiKeyInput.value = storedKey;
-    }
-
-    /* -----------------------------
-       API CALL
-    ------------------------------*/
-    async function fetchPrice(ticker, apiKey) {
-      const url = `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${ticker}&apikey=${apiKey}`;
-      const response = await fetch(url);
-      const data = await response.json();
-
-      if (!data["Global Quote"] || !data["Global Quote"]["05. price"]) {
-        throw new Error("Ticker niet gevonden: " + ticker);
-      }
-      return Number(data["Global Quote"]["05. price"]);
-    }
-
-    /* -----------------------------
-       POSITIE TOEVOEGEN
-    ------------------------------*/
-    addButton.addEventListener('click', async () => {
-      const apiKey = apiKeyInput.value.trim();
-      let ticker = tickerInput.value.trim().toUpperCase();
-      const shares = Number(sharesInput.value);
-      const buyPrice = Number(buyPriceInput.value);
-
-      if (!ticker || shares <= 0 || buyPrice <= 0) {
-        alert("Vul alle velden correct in.");
-        return;
-      }
-
-      let price = 0;
-
-      if (!apiKey) {
-        alert("Geen API key ingevuld. Positie wordt toegevoegd met koers 0.");
-      } else {
-        try {
-          price = await fetchPrice(ticker, apiKey);
-        } catch (e) {
-          alert(e.message + ". Positie wordt toch toegevoegd.");
-        }
-      }
-
-      positions.push({
-        ticker,
-        shares,
-        buyPrice,
-        currentPrice: price,
-        currency: getCurrencyForTicker(ticker)
-      });
-
-      tickerInput.value = '';
-      sharesInput.value = '';
-      buyPriceInput.value = '';
-
-      save();
-      render();
-    });
-
-    /* -----------------------------
-       KOERSEN VERVERSEN
-    ------------------------------*/
-    refreshButton.addEventListener('click', async () => {
-      const apiKey = apiKeyInput.value.trim();
-      if (!apiKey) {
-        alert("Voer je API key in.");
-        return;
-      }
-
-      refreshButton.disabled = true;
-      refreshButton.textContent = "Bezig...";
-
-      for (let pos of positions) {
-        try {
-          pos.currentPrice = await fetchPrice(pos.ticker, apiKey);
-        } catch (e) {
-          alert(e.message);
-        }
-      }
-
-      save();
-      render();
-
-      refreshButton.disabled = false;
-      refreshButton.textContent = "Koersen verversen";
-    });
-
-    /* -----------------------------
-       ALLES WISSEN
-    ------------------------------*/
-    clearButton.addEventListener('click', () => {
-      if (confirm("Alles wissen?")) {
-        positions = [];
-        save();
-        render();
-      }
-    });
-
-    startCapitalInput.addEventListener('input', () => { save(); render(); });
-    cashInput.addEventListener('input', () => { save(); render(); });
-    apiKeyInput.addEventListener('input', () => { save(); });
-
-    load();
-    render();
-  </script>
-</body>
-</html>
+      const raw = localStorage.getItem('portfolio
