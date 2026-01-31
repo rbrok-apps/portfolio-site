@@ -156,13 +156,6 @@ async function searchFinnhub(query, apiKey) {
   return d.result || [];
 }
 
-async function loadAmsterdamSymbols(apiKey) {
-  const url = `https://finnhub.io/api/v1/stock/symbol?exchange=AS&token=${apiKey}`;
-  const r = await fetch(url);
-  const data = await r.json();
-  return Array.isArray(data) ? data : [];
-}
-
 searchInput.addEventListener("input", async () => {
   const q = searchInput.value.trim();
   const apiKey = finnhubKeyInput.value.trim();
@@ -178,42 +171,22 @@ searchInput.addEventListener("input", async () => {
   }
 
   try {
-    const [general, ams] = await Promise.all([
-      searchFinnhub(q, apiKey),
-      loadAmsterdamSymbols(apiKey)
-    ]);
+    const results = await searchFinnhub(q, apiKey);
 
-    const amsMatches = ams.filter(s =>
-      (s.description || "").toLowerCase().includes(q.toLowerCase()) ||
-      (s.symbol || "").toLowerCase().includes(q.toLowerCase())
-    );
-
-    const combined = [
-      ...amsMatches.map(s => ({ symbol: s.symbol, description: s.description })),
-      ...general.map(s => ({ symbol: s.symbol, description: s.description }))
-    ];
-
-    const unique = [];
-    const seen = new Set();
-    for (const item of combined) {
-      if (!seen.has(item.symbol)) {
-        seen.add(item.symbol);
-        unique.push(item);
-      }
-    }
-
-    if (unique.length === 0) {
+    if (!results.length) {
       searchResults.innerHTML = "<div class='search-item'>Geen resultaten gevonden</div>";
       searchResults.style.display = "block";
       return;
     }
 
-    unique.forEach(item => {
+    results.forEach(item => {
+      const symbol = item.symbol || item.displaySymbol || "";
+      const desc = item.description || symbol;
       const div = document.createElement("div");
       div.className = "search-item";
-      div.textContent = `${item.symbol} — ${item.description}`;
+      div.textContent = `${symbol} — ${desc}`;
       div.onclick = () => {
-        tickerInput.value = item.symbol.toUpperCase();
+        tickerInput.value = symbol.toUpperCase();
         searchResults.style.display = "none";
       };
       searchResults.appendChild(div);
